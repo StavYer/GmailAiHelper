@@ -51,9 +51,11 @@ def main():
     # Check if any messages were found
     if not messages:
         print('No messages found.')
-    else:
+
+    with model.chat_session():
+        email_data = []
+
         for message in messages:
-            # Get the full message details
             msg = service.users().messages().get(userId='me', id=message['id'], format='full').execute()
             headers = msg['payload']['headers']  # Extract headers from the message payload
             subject = ''  # Initialize subject variable
@@ -63,9 +65,44 @@ def main():
                     subject = header['value']
                 if header['name'] == 'From':
                     sender = header['value']
+            # Prepare the prompt
+            prompt = f"""
+            You are an AI assistant that categorizes emails.
+            Email Subject: {subject}
+            Email Sender: {sender}
+            Please categorize this email into one of the following categories: Work, School, Shopping, Social, Updates, Promotions, Spam, or Other.
+            Also, determine the priority of the email: Urgent, Important, Normal, Low.
+            Does this email require a response? Answer Yes or No.
 
-            print(f"Subject: {subject}")
-            print(f"From: {sender}")
+            Provide your response in the following JSON format:
+            {{
+            "category": "<category>",
+            "priority": "<priority>",
+            "requires_response": "<Yes/No>"
+            }}
+            """
+
+            # Get the LLM's response
+            response = model.generate(prompt)
+
+            # Parse the response
+            try:
+                response_json = json.loads(response)
+            except json.JSONDecodeError:
+                print("Failed to parse LLM response.")
+                continue
+
+            email_data.append({
+                'subject': subject,
+                'sender': sender,
+                'category': response_json.get('category', 'Unknown'),
+                'priority': response_json.get('priority', 'Normal'),
+                'requires_response': response_json.get('requires_response', 'No')
+            })
+
+            print(email_data)
+
+
 
 if __name__ == '__main__':
     main()
