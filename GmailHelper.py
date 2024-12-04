@@ -4,6 +4,7 @@ import redis
 
 import pickle
 import json
+import matplotlib.pyplot as plt
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -68,14 +69,13 @@ def main():
 
         for message in messages:
             msg = service.users().messages().get(userId='me', id=message['id'], format='full').execute()
-            headers = msg['payload']['headers']  # Extract headers from the message payload
+            headers = {header['name']: header['value'] for header in msg['payload']['headers']}  # Create a dictionary of headers
             subject = ''  # Initialize subject variable
             sender = ''  # Initialize sender variable
-            for header in headers:
-                if header['name'] == 'Subject':
-                    subject = header['value']
-                if header['name'] == 'From':
-                    sender = header['value']
+
+            subject = headers.get('Subject', '')
+
+            sender = headers.get('From', '')
 
             cache_key = f"email_response:{message['id']}"
             cached_response = get_cached_response(cache_key)
@@ -91,7 +91,7 @@ def main():
                 Please categorize this email into one of the following categories: Work, School, Shopping, Social, Updates, Promotions, Spam, or Other.
                 Also, determine the priority of the email: Urgent, Important, Normal, Low.
                 Does this email require a response? Answer Yes or No.
-                I need you to output only raw JSON code. 
+                output only raw JSON code, no explanations. 
                 Provide your response in the following JSON format:
                 {{
                 "subject": "<subject>",
@@ -109,11 +109,25 @@ def main():
                     response_json = json.loads(response)
                     set_cached_response(cache_key, json.dumps(response_json))
                 except json.JSONDecodeError:
+                    print(response)
                     print("Failed to parse LLM response.")
                     continue
             email_data.append(response_json)
 
-        print(email_data)
+        # Analyze categories
+        categories = [email['category'] for email in email_data]
+        category_counts = {}
+        for category in categories:
+            category_counts[category] = category_counts.get(category, 0) + 1
+
+        # Create pie chart
+        labels = category_counts.keys()
+        sizes = category_counts.values()
+
+        plt.figure(figsize=(8,8))
+        plt.pie(sizes, labels=labels, autopct='%1.1f%%')
+        plt.title('Email Categories')
+        plt.show()
 
 
 if __name__ == '__main__':
