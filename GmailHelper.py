@@ -1,5 +1,6 @@
 import os
 import gpt4all
+import redis
 
 import pickle
 import json
@@ -18,8 +19,18 @@ MODEL_LOCATION = os.getenv("MODEL_LOCATION")
 # Initialize the GPT4All model
 model = gpt4all.GPT4All(MODEL_LOCATION) 
 
+# Connect to Redis
+r = redis.Redis(host='localhost', port=6379, db=0)
+
 # If modifying these SCOPES, delete the file token.pickle.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+
+# Functions for caching
+def get_cached_response(key):
+    return r.get(key)
+
+def set_cached_response(key, value, expiration=14400):
+    r.setex(key, expiration, value)
 
 def main():
     """Shows basic usage of the Gmail API."""
@@ -45,7 +56,7 @@ def main():
     # Build the Gmail service using the credentials
     service = build('gmail', 'v1', credentials=creds)
     # Call the Gmail API to list messages for the authenticated user, limiting to 1 message
-    results = service.users().messages().list(userId='me', maxResults=1).execute()
+    results = service.users().messages().list(userId='me', maxResults=20).execute()
     messages = results.get('messages', [])  # Extract messages from the results
 
     # Check if any messages were found
@@ -65,43 +76,44 @@ def main():
                     subject = header['value']
                 if header['name'] == 'From':
                     sender = header['value']
-            # Prepare the prompt
-            prompt = f"""
-            You are an AI assistant that categorizes emails.
-            Email Subject: {subject}
-            Email Sender: {sender}
-            Please categorize this email into one of the following categories: Work, School, Shopping, Social, Updates, Promotions, Spam, or Other.
-            Also, determine the priority of the email: Urgent, Important, Normal, Low.
-            Does this email require a response? Answer Yes or No.
 
-            Provide your response in the following JSON format:
-            {{
-            "category": "<category>",
-            "priority": "<priority>",
-            "requires_response": "<Yes/No>"
-            }}
-            """
+            cache_key = f"email_response:{message['id']}"
+            cached_response = get_cached_response(cache_key)
 
-            # Get the LLM's response
-            response = model.generate(prompt)
+            if cached_response:
+                response_json = json.loads(cached_response)
+            else:
+                # Prepare the prompt
+                prompt = f"""
+                You are an AI assistant that categorizes emails.
+                Email Subject: {subject}
+                Email Sender: {sender}
+                Please categorize this email into one of the following categories: Work, School, Shopping, Social, Updates, Promotions, Spam, or Other.
+                Also, determine the priority of the email: Urgent, Important, Normal, Low.
+                Does this email require a response? Answer Yes or No.
+                I need you to output only raw JSON code. 
+                Provide your response in the following JSON format:
+                {{
+                "subject": "<subject>",
+                "sender": "<sender>",
+                "category": "<category>",
+                "priority": "<priority>",
+                "requires_response": "<Yes/No>"
+                }}
+                """
 
-            # Parse the response
-            try:
-                response_json = json.loads(response)
-            except json.JSONDecodeError:
-                print("Failed to parse LLM response.")
-                continue
+                # Get the LLM's response
+                response = model.generate(prompt)
+                # Parse the response
+                try:
+                    response_json = json.loads(response)
+                    set_cached_response(cache_key, json.dumps(response_json))
+                except json.JSONDecodeError:
+                    print("Failed to parse LLM response.")
+                    continue
+            email_data.append(response_json)
 
-            email_data.append({
-                'subject': subject,
-                'sender': sender,
-                'category': response_json.get('category', 'Unknown'),
-                'priority': response_json.get('priority', 'Normal'),
-                'requires_response': response_json.get('requires_response', 'No')
-            })
-
-            print(email_data)
-
+        print(email_data)
 
 
 if __name__ == '__main__':
