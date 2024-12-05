@@ -60,7 +60,7 @@ def main():
     # Build the Gmail service using the credentials
     service = build('gmail', 'v1', credentials=creds)
     # Call the Gmail API to list messages for the authenticated user, limiting to 1 message
-    results = service.users().messages().list(userId='me', maxResults=20).execute()
+    results = service.users().messages().list(userId='me', maxResults=36).execute()
     messages = results.get('messages', [])  # Extract messages from the results
 
     # Check if any messages were found
@@ -115,8 +115,7 @@ def main():
                     response_json = json.loads(response)
                     set_cached_response(cache_key, json.dumps(response_json))
                 except json.JSONDecodeError:
-                    print(response)
-                    print("Failed to parse LLM response.")
+                    print("Failed to parse LLM response. Extracting info")
                     continue
             email_data.append(response_json)
 
