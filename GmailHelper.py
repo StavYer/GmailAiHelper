@@ -5,6 +5,7 @@ import redis
 import pickle
 import json
 import matplotlib.pyplot as plt
+from collections import Counter
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -57,7 +58,7 @@ def main():
     # Build the Gmail service using the credentials
     service = build('gmail', 'v1', credentials=creds)
     # Call the Gmail API to list messages for the authenticated user, limiting to 1 message
-    results = service.users().messages().list(userId='me', maxResults=20).execute()
+    results = service.users().messages().list(userId='me', maxResults=10).execute()
     messages = results.get('messages', [])  # Extract messages from the results
 
     # Check if any messages were found
@@ -77,6 +78,7 @@ def main():
 
             sender = headers.get('From', '')
 
+            # We check if the email is in the Redis cache, if not we send it to the LLM.
             cache_key = f"email_response:{message['id']}"
             cached_response = get_cached_response(cache_key)
 
@@ -100,11 +102,13 @@ def main():
                 "priority": "<priority>",
                 "requires_response": "<Yes/No>"
                 }}
+
+                IMPORTANT - output raw JSON code ready to be integrated into a database.
                 """
 
                 # Get the LLM's response
                 response = model.generate(prompt)
-                # Parse the response
+                # Parse the response, and cache it.
                 try:
                     response_json = json.loads(response)
                     set_cached_response(cache_key, json.dumps(response_json))
@@ -116,17 +120,33 @@ def main():
 
         # Analyze categories
         categories = [email['category'] for email in email_data]
-        category_counts = {}
-        for category in categories:
-            category_counts[category] = category_counts.get(category, 0) + 1
+        category_counts = Counter(categories)
 
-        # Create pie chart
+        # Analyze priorities
+        priorities = [email['priority'] for email in email_data]
+        priority_counts = Counter(priorities)
+
+        # Create subplots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 7))
+
+        # Pie chart on the first subplot
         labels = category_counts.keys()
         sizes = category_counts.values()
 
-        plt.figure(figsize=(8,8))
-        plt.pie(sizes, labels=labels, autopct='%1.1f%%')
-        plt.title('Email Categories')
+        ax1.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
+        ax1.set_title('Email Categories')
+        ax1.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+
+        # Bar chart on the second subplot
+        ax2.bar(priority_counts.keys(), priority_counts.values(), color='skyblue')
+        ax2.set_title('Email Priorities')
+        ax2.set_xlabel('Priority')
+        ax2.set_ylabel('Number of Emails')
+
+        # Adjust layout
+        plt.tight_layout()
+
+        # Show the plots
         plt.show()
 
 
