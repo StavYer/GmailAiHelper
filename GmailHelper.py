@@ -5,7 +5,9 @@ import redis
 import pickle
 import json
 import matplotlib.pyplot as plt
-from collections import Counter
+
+from tqdm import tqdm
+from collections import Counter, defaultdict
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -58,7 +60,7 @@ def main():
     # Build the Gmail service using the credentials
     service = build('gmail', 'v1', credentials=creds)
     # Call the Gmail API to list messages for the authenticated user, limiting to 1 message
-    results = service.users().messages().list(userId='me', maxResults=10).execute()
+    results = service.users().messages().list(userId='me', maxResults=20).execute()
     messages = results.get('messages', [])  # Extract messages from the results
 
     # Check if any messages were found
@@ -68,7 +70,7 @@ def main():
     with model.chat_session():
         email_data = []
 
-        for message in messages:
+        for message in tqdm(messages, desc='Processing Emails'):
             msg = service.users().messages().get(userId='me', id=message['id'], format='full').execute()
             headers = {header['name']: header['value'] for header in msg['payload']['headers']}  # Create a dictionary of headers
             subject = ''  # Initialize subject variable
@@ -93,7 +95,7 @@ def main():
                 Please categorize this email into one of the following categories: Work, School, Shopping, Social, Updates, Promotions, Spam, or Other.
                 Also, determine the priority of the email: Urgent, Important, Normal, Low.
                 Does this email require a response? Answer Yes or No.
-                output only raw JSON code, no explanations. 
+                output only raw JSON code, no explanations or titles.
                 Provide your response in the following JSON format:
                 {{
                 "subject": "<subject>",
@@ -103,7 +105,7 @@ def main():
                 "requires_response": "<Yes/No>"
                 }}
 
-                IMPORTANT - output raw JSON code ready to be integrated into a database.
+                IMPORTANT - output only raw code ready to be run. NO EXPLANATIONS OR TITLES.
                 """
 
                 # Get the LLM's response
@@ -126,8 +128,19 @@ def main():
         priorities = [email['priority'] for email in email_data]
         priority_counts = Counter(priorities)
 
+        # Analyze senders within each category
+        category_senders = defaultdict(list)
+        for email in email_data:
+            category_senders[email['category']].append(email['sender'])
+
+        # Count the top 3 senders in each category
+        top_senders = {}
+        for category, senders in category_senders.items():
+            sender_counts = Counter(senders)
+            top_senders[category] = sender_counts.most_common(3)
+
         # Create subplots
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 7))
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(21, 7))
 
         # Pie chart on the first subplot
         labels = category_counts.keys()
@@ -142,6 +155,23 @@ def main():
         ax2.set_title('Email Priorities')
         ax2.set_xlabel('Priority')
         ax2.set_ylabel('Number of Emails')
+
+        # Table for top 3 senders in each category on the third subplot
+        ax3.axis('off')  # Turn off the axis
+        table_data = []
+
+        # Prepare table data
+        for category, senders in top_senders.items():
+            for sender, count in senders:
+                table_data.append([category, sender, count])
+
+        # Create the table
+        table = ax3.table(cellText=table_data, colLabels=['Category', 'Sender', 'Count'], loc='center', cellLoc='center')
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1.2, 1.2)
+
+        ax3.set_title('Top 3 Senders in Each Category')
 
         # Adjust layout
         plt.tight_layout()
